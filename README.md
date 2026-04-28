@@ -101,7 +101,7 @@ Then follow the register/login examples in `docs/api_spec.md` or use `openapi/op
 Set this in the mobile app environment:
 
 ```bash
-EXPO_PUBLIC_API_BASE_URL=https://<api-domain>
+EXPO_PUBLIC_API_BASE_URL=https://api.groadminapp.com
 ```
 
 Use `expo-secure-store` or equivalent secure storage for `access_token` and `refresh_token`. Send the access token on authenticated calls:

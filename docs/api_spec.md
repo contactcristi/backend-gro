@@ -1,6 +1,6 @@
 # GRO Backend API Spec
 
-Base URL: `https://<api-domain>/v1`
+Base URL: `https://api.groadminapp.com/v1`
 
 Local container URL: `http://localhost:3000/v1`
 
@@ -516,7 +516,7 @@ The API container connects to Postgres through the internal Compose service name
 Set:
 
 ```bash
-EXPO_PUBLIC_API_BASE_URL=https://<api-domain>
+EXPO_PUBLIC_API_BASE_URL=https://api.groadminapp.com
 ```
 
 Example register:

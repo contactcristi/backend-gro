@@ -4,8 +4,8 @@ info:
   version: 1.0.0
   description: API contract for GRO mobile app integration covering Phases 0, 1, and 2.
 servers:
-  - url: https://api.example.com
-    description: Production placeholder
+  - url: https://api.groadminapp.com
+    description: Production
   - url: http://localhost:3000
     description: Local Docker/API server
 security:

@@ -23,7 +23,7 @@ Set a **public** base URL (no database credentials):
 
 | Variable | Example |
 |----------|---------|
-| `EXPO_PUBLIC_API_BASE_URL` | `https://api.yourdomain.com` |
+| `EXPO_PUBLIC_API_BASE_URL` | `https://api.groadminapp.com` |
 
 - No trailing slash.
 - Use **HTTPS** in production.
@@ -63,10 +63,10 @@ map $http_upgrade $connection_upgrade {
 
 server {
   listen 443 ssl http2;
-  server_name api.yourdomain.com;
+  server_name api.groadminapp.com;
 
-  ssl_certificate     /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/api.yourdomain.com/privkey.pem;
+  ssl_certificate     /etc/letsencrypt/live/api.groadminapp.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/api.groadminapp.com/privkey.pem;
 
   location / {
     proxy_pass http://127.0.0.1:3000;

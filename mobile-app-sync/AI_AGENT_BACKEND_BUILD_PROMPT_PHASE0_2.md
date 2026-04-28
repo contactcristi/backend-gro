@@ -108,7 +108,7 @@ These impose validation rules you must mirror server-side:
 
 ## Recommended API base path
 
-Mobile apps typically configure a public API origin via `EXPO_PUBLIC_API_BASE_URL` (example: `https://api.example.com`).
+Mobile apps typically configure a public API origin via `EXPO_PUBLIC_API_BASE_URL` (example: `https://api.groadminapp.com`).
 
 To avoid future collisions, implement API routing under:
 
@@ -116,8 +116,8 @@ To avoid future collisions, implement API routing under:
 
 Nginx should route:
 
-- `https://api.example.com/v1/*` → Node upstream
-- `https://api.example.com/healthz` → Node upstream (or Nginx static health)
+- `https://api.groadminapp.com/v1/*` → Node upstream
+- `https://api.groadminapp.com/healthz` → Node upstream (or Nginx static health)
 
 ---
 
@@ -716,7 +716,7 @@ Final step:
 
 - Provide a single **Integration Guide** section tailored for the mobile app:
 
-  - Example: set `EXPO_PUBLIC_API_BASE_URL=https://api.example.com`
+  - Example: set `EXPO_PUBLIC_API_BASE_URL=https://api.groadminapp.com`
   - Example requests with curl for register/login/me
   - Guidance on storing tokens using `expo-secure-store` (client-side; mention as integration expectation)
 

@@ -82,7 +82,7 @@ Recommended future shape:
 Reference:
 
 - `EXPO_PUBLIC_API_BASE_URL=`
-- Example comment: `https://api.yourdomain.com`
+- Example comment: `https://api.groadminapp.com`
 
 Role:
 
@@ -125,8 +125,8 @@ No. The URL source is already externalized through `constants/apiConfig.ts`. The
 
 References:
 
-- `https://api.yourdomain.com`
-- `api.yourdomain.com`
+- `https://api.groadminapp.com`
+- `api.groadminapp.com`
 - `http://127.0.0.1:3000`
 - `DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/gro`
 
