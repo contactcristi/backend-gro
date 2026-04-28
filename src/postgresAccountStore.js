@@ -33,6 +33,79 @@ function mapNotificationRow(row) {
   };
 }
 
+function mapTenancyRow(row) {
+  return {
+    id: row.id,
+    property_address: row.property_address,
+    monthly_rent: Number(row.monthly_rent_gbp),
+    payment_day: row.payment_day,
+    landlord_name: row.landlord_name,
+    agent_name: row.agent_name,
+    tenancy_end_date: row.tenancy_end_date,
+    landlord_email: row.landlord_email,
+    landlord_phone: row.landlord_phone,
+  };
+}
+
+function mapRentPaymentRow(row) {
+  return {
+    id: row.id,
+    amount: Number(row.amount_gbp),
+    due_date: row.due_date,
+    paid_date: row.paid_date,
+    status: row.status,
+  };
+}
+
+function mapRentReportRow(row) {
+  return {
+    id: row.id,
+    amount: Number(row.amount_gbp),
+    payment_date: row.payment_date,
+    payment_method: row.payment_method,
+    reference: row.reference,
+    notes: row.notes,
+    source: row.source,
+    status: row.status,
+    created_at: row.created_at,
+  };
+}
+
+function addMonths(date, months) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+}
+
+function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function dueDateForMonth(monthStart, paymentDay) {
+  const year = monthStart.getUTCFullYear();
+  const month = monthStart.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return formatDate(new Date(Date.UTC(year, month, Math.min(paymentDay, lastDay))));
+}
+
+function buildRentSchedule({ monthlyRent, paymentDay, tenancyEndDate, now }) {
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  let firstMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+  if (dueDateForMonth(firstMonth, paymentDay) < formatDate(today)) {
+    firstMonth = addMonths(firstMonth, 1);
+  }
+
+  const payments = [];
+  for (let i = 0; i < 12; i += 1) {
+    const dueDate = dueDateForMonth(addMonths(firstMonth, i), paymentDay);
+    if (dueDate > tenancyEndDate) break;
+    payments.push({
+      amount: monthlyRent,
+      dueDate,
+      status: 'due',
+    });
+  }
+  return payments;
+}
+
 function buildUpdateSet(updates, mapping, startIndex = 1) {
   const assignments = [];
   const values = [];
@@ -264,9 +337,176 @@ function createPostgresAccountStore(pool) {
       );
       return result.rowCount;
     },
+
+    async upsertTenancy(userId, tenancy, { now }) {
+      const client = await pool.connect();
+
+      try {
+        await client.query('BEGIN');
+        const tenancyResult = await client.query(
+          `INSERT INTO tenancies (
+             user_id,
+             property_address,
+             monthly_rent_gbp,
+             payment_day,
+             landlord_name,
+             agent_name,
+             tenancy_end_date,
+             landlord_email,
+             landlord_phone
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (user_id) DO UPDATE
+           SET
+             property_address = EXCLUDED.property_address,
+             monthly_rent_gbp = EXCLUDED.monthly_rent_gbp,
+             payment_day = EXCLUDED.payment_day,
+             landlord_name = EXCLUDED.landlord_name,
+             agent_name = EXCLUDED.agent_name,
+             tenancy_end_date = EXCLUDED.tenancy_end_date,
+             landlord_email = EXCLUDED.landlord_email,
+             landlord_phone = EXCLUDED.landlord_phone
+           RETURNING
+             id::text,
+             property_address,
+             monthly_rent_gbp,
+             payment_day,
+             landlord_name,
+             agent_name,
+             to_char(tenancy_end_date, 'YYYY-MM-DD') AS tenancy_end_date,
+             landlord_email,
+             landlord_phone`,
+          [
+            userId,
+            tenancy.property_address,
+            tenancy.monthly_rent,
+            tenancy.payment_day,
+            tenancy.landlord_name,
+            tenancy.agent_name,
+            tenancy.tenancy_end_date,
+            tenancy.landlord_email,
+            tenancy.landlord_phone,
+          ],
+        );
+        const savedTenancy = tenancyResult.rows[0];
+        const schedule = buildRentSchedule({
+          monthlyRent: tenancy.monthly_rent,
+          paymentDay: tenancy.payment_day,
+          tenancyEndDate: tenancy.tenancy_end_date,
+          now,
+        });
+
+        for (const payment of schedule) {
+          await client.query(
+            `INSERT INTO rent_payments (user_id, tenancy_id, amount_gbp, due_date, status)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (tenancy_id, due_date) DO UPDATE
+             SET amount_gbp = EXCLUDED.amount_gbp`,
+            [userId, savedTenancy.id, payment.amount, payment.dueDate, payment.status],
+          );
+        }
+
+        await client.query(
+          `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+           VALUES ($1, 'tenancy.update', 'tenancy', $2, '{}'::jsonb)`,
+          [userId, savedTenancy.id],
+        );
+
+        await client.query('COMMIT');
+        return mapTenancyRow(savedTenancy);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async getTenancy(userId) {
+      const result = await pool.query(
+        `SELECT
+           id::text,
+           property_address,
+           monthly_rent_gbp,
+           payment_day,
+           landlord_name,
+           agent_name,
+           to_char(tenancy_end_date, 'YYYY-MM-DD') AS tenancy_end_date,
+           landlord_email,
+           landlord_phone
+         FROM tenancies
+         WHERE user_id = $1`,
+        [userId],
+      );
+      return result.rows[0] ? mapTenancyRow(result.rows[0]) : null;
+    },
+
+    async listRentPayments(userId) {
+      const result = await pool.query(
+        `SELECT
+           id::text,
+           amount_gbp,
+           to_char(due_date, 'YYYY-MM-DD') AS due_date,
+           to_char(paid_date, 'YYYY-MM-DD') AS paid_date,
+           status
+         FROM rent_payments
+         WHERE user_id = $1
+         ORDER BY due_date ASC`,
+        [userId],
+      );
+      return result.rows.map(mapRentPaymentRow);
+    },
+
+    async createManualRentReport(userId, report) {
+      const tenancy = await this.getTenancy(userId);
+      if (!tenancy) return null;
+
+      const result = await pool.query(
+        `INSERT INTO rent_reports (
+           user_id,
+           tenancy_id,
+           amount_gbp,
+           payment_date,
+           payment_method,
+           reference,
+           notes,
+           source,
+           status
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', 'pending')
+         RETURNING
+           id::text,
+           amount_gbp,
+           to_char(payment_date, 'YYYY-MM-DD') AS payment_date,
+           payment_method,
+           reference,
+           notes,
+           source,
+           status,
+           created_at`,
+        [
+          userId,
+          tenancy.id,
+          report.amount,
+          report.payment_date,
+          report.payment_method,
+          report.reference,
+          report.notes,
+        ],
+      );
+
+      await pool.query(
+        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+         VALUES ($1, 'rent_report.create', 'rent_report', $2, '{}'::jsonb)`,
+        [userId, result.rows[0].id],
+      );
+
+      return mapRentReportRow(result.rows[0]);
+    },
   };
 }
 
 module.exports = {
+  buildRentSchedule,
   createPostgresAccountStore,
 };

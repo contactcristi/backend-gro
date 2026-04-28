@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
 const BCRYPT_COST = 12;
+const PAYMENT_METHODS = new Set(['Bank transfer', 'Standing order', 'Direct debit', 'Cash', 'Other']);
 
 function sendError(res, status, code, message, details = {}) {
   return res.status(status).json({
@@ -177,6 +178,81 @@ function validateSettingsUpdates(body) {
   return { updates };
 }
 
+function normalizeOptionalText(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeMoney(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : Number.NaN;
+}
+
+function validateTenancyBody(body) {
+  const propertyAddress = String(body.property_address || '').trim();
+  const monthlyRent = normalizeMoney(body.monthly_rent);
+  const paymentDay = Number(body.payment_day);
+  const landlordName = String(body.landlord_name || '').trim();
+  const agentName = String(body.agent_name || '').trim();
+
+  if (!propertyAddress) {
+    return { error: { code: 'invalid_property_address', message: 'Property address is required.', field: 'property_address' } };
+  }
+  if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
+    return { error: { code: 'invalid_monthly_rent', message: 'Monthly rent must be greater than 0.', field: 'monthly_rent' } };
+  }
+  if (!Number.isInteger(paymentDay) || paymentDay < 1 || paymentDay > 31) {
+    return { error: { code: 'invalid_payment_day', message: 'Payment day must be between 1 and 31.', field: 'payment_day' } };
+  }
+  if (!landlordName) {
+    return { error: { code: 'invalid_landlord_name', message: 'Landlord name is required.', field: 'landlord_name' } };
+  }
+  if (!isRealDate(body.tenancy_end_date)) {
+    return { error: { code: 'invalid_tenancy_end_date', message: 'Tenancy end date must be a real YYYY-MM-DD date.', field: 'tenancy_end_date' } };
+  }
+
+  return {
+    tenancy: {
+      property_address: propertyAddress,
+      monthly_rent: monthlyRent,
+      payment_day: paymentDay,
+      landlord_name: landlordName,
+      agent_name: agentName,
+      tenancy_end_date: body.tenancy_end_date,
+      landlord_email: normalizeOptionalText(body.landlord_email),
+      landlord_phone: normalizeOptionalText(body.landlord_phone),
+    },
+  };
+}
+
+function validateManualRentReportBody(body, now) {
+  const amount = normalizeMoney(body.amount);
+
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 50000) {
+    return { error: { code: 'invalid_amount', message: 'Amount must be greater than 0 and at most 50000.', field: 'amount' } };
+  }
+  if (!isRealDate(body.payment_date)) {
+    return { error: { code: 'invalid_payment_date', message: 'Payment date must be a real YYYY-MM-DD date.', field: 'payment_date' } };
+  }
+  if (body.payment_date > now().toISOString().slice(0, 10)) {
+    return { error: { code: 'invalid_payment_date', message: 'Payment date cannot be in the future.', field: 'payment_date' } };
+  }
+  if (!PAYMENT_METHODS.has(body.payment_method)) {
+    return { error: { code: 'invalid_payment_method', message: 'Payment method is not supported.', field: 'payment_method' } };
+  }
+
+  return {
+    report: {
+      amount,
+      payment_date: body.payment_date,
+      payment_method: body.payment_method,
+      reference: normalizeOptionalText(body.reference),
+      notes: normalizeOptionalText(body.notes),
+    },
+  };
+}
+
 function authenticate(jwtSecret) {
   return (req, res, next) => {
     const header = req.get('authorization') || '';
@@ -200,7 +276,7 @@ function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
-function createApp({ accountStore, jwtSecret, pool }) {
+function createApp({ accountStore, jwtSecret, pool, now = () => new Date() }) {
   if (!accountStore) throw new Error('accountStore is required');
   if (!jwtSecret) throw new Error('jwtSecret is required');
 
@@ -330,6 +406,42 @@ function createApp({ accountStore, jwtSecret, pool }) {
       return sendError(res, 404, 'notification_not_found', 'Notification was not found.');
     }
     return res.json({ data: { notification } });
+  }));
+
+  app.get('/v1/me/tenancy', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const tenancy = await accountStore.getTenancy(req.auth.userId);
+    if (!tenancy) {
+      return sendError(res, 404, 'tenancy_not_found', 'Tenancy was not found.');
+    }
+    return res.json({ data: { tenancy } });
+  }));
+
+  app.put('/v1/me/tenancy', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const { tenancy, error } = validateTenancyBody(req.body || {});
+    if (error) {
+      return sendError(res, 400, error.code, error.message, error.field ? { field: error.field } : {});
+    }
+
+    const savedTenancy = await accountStore.upsertTenancy(req.auth.userId, tenancy, { now: now() });
+    return res.json({ data: { tenancy: savedTenancy } });
+  }));
+
+  app.get('/v1/me/rent/payments', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const payments = await accountStore.listRentPayments(req.auth.userId);
+    return res.json({ data: { payments } });
+  }));
+
+  app.post('/v1/me/rent/reports/manual', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const { report, error } = validateManualRentReportBody(req.body || {}, now);
+    if (error) {
+      return sendError(res, 400, error.code, error.message, error.field ? { field: error.field } : {});
+    }
+
+    const rentReport = await accountStore.createManualRentReport(req.auth.userId, report);
+    if (!rentReport) {
+      return sendError(res, 404, 'tenancy_not_found', 'Create a tenancy before reporting rent.');
+    }
+    return res.status(201).json({ data: { report: rentReport } });
   }));
 
   app.use((err, req, res, next) => {

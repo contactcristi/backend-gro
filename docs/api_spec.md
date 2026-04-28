@@ -21,6 +21,7 @@ Authorization: Bearer <access_token>
 Migration order:
 
 1. `migrations/001_phase0_phase1.sql`
+2. `migrations/002_phase2_rent.sql`
 
 Created extensions:
 
@@ -36,8 +37,13 @@ Created tables:
 - `audit_log`: core user/auth/profile/settings events
 - `user_settings`: mobile `AppSettings` defaults
 - `notifications`: Phase 1 notification inbox rows
+- `tenancies`: one active tenancy per user for the MVP
+- `rent_payments`: explicit rent schedule rows generated from tenancy details
+- `rent_reports`: manual rent reports with verification status fields
 
 Partial onboarding note: register only collects `name`, `email`, and `password`, so `user_profiles.dob` is nullable and `nationality` defaults to an empty string until the mobile profile-edit flow supplies those values.
+
+Rent schedule note: `PUT /v1/me/tenancy` generates up to 12 future monthly payment rows. If `payment_day` is past for the current month, generation starts next month. For short months, the due date is clamped to the month's last day.
 
 ## Endpoints
 
@@ -322,6 +328,157 @@ Success `200`:
   }
 }
 ```
+
+### GET `/v1/me/tenancy`
+
+Returns the authenticated user's active tenancy.
+
+Headers:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Success `200`:
+
+```json
+{
+  "data": {
+    "tenancy": {
+      "id": "uuid",
+      "property_address": "Flat 4, 10 Grove Street, London",
+      "monthly_rent": 1450,
+      "payment_day": 5,
+      "landlord_name": "Sam Landlord",
+      "agent_name": "",
+      "tenancy_end_date": "2027-04-30",
+      "landlord_email": "landlord@example.com",
+      "landlord_phone": "+44 7700 900123"
+    }
+  }
+}
+```
+
+Possible errors:
+
+- `401 auth_required`
+- `401 invalid_token`
+- `404 tenancy_not_found`
+
+### PUT `/v1/me/tenancy`
+
+Creates or replaces the authenticated user's active tenancy. This also creates or updates explicit `rent_payments` rows for up to the next 12 months.
+
+Request:
+
+```json
+{
+  "property_address": "Flat 4, 10 Grove Street, London",
+  "monthly_rent": 1450,
+  "payment_day": 5,
+  "landlord_name": "Sam Landlord",
+  "agent_name": "",
+  "tenancy_end_date": "2027-04-30",
+  "landlord_email": "landlord@example.com",
+  "landlord_phone": "+44 7700 900123"
+}
+```
+
+Validation:
+
+- `property_address` is required
+- `monthly_rent > 0`
+- `payment_day` must be an integer `1..31`
+- `landlord_name` is required
+- `agent_name` may be an empty string
+- `tenancy_end_date` must be a real `YYYY-MM-DD` date
+- `landlord_email` and `landlord_phone` are optional strings
+
+Success `200`: same tenancy shape as `GET /v1/me/tenancy`.
+
+Possible errors:
+
+- `400 invalid_property_address`
+- `400 invalid_monthly_rent`
+- `400 invalid_payment_day`
+- `400 invalid_landlord_name`
+- `400 invalid_tenancy_end_date`
+- `401 auth_required`
+- `401 invalid_token`
+
+### GET `/v1/me/rent/payments`
+
+Lists generated rent payment schedule rows sorted by `due_date`.
+
+Success `200`:
+
+```json
+{
+  "data": {
+    "payments": [
+      {
+        "id": "uuid",
+        "amount": 1450,
+        "due_date": "2026-05-05",
+        "paid_date": null,
+        "status": "due"
+      }
+    ]
+  }
+}
+```
+
+### POST `/v1/me/rent/reports/manual`
+
+Creates a manual rent report for the authenticated user's tenancy.
+
+Request:
+
+```json
+{
+  "amount": 1450,
+  "payment_date": "2026-04-27",
+  "payment_method": "Bank transfer",
+  "reference": "TXN-123",
+  "notes": "April rent"
+}
+```
+
+Validation:
+
+- `amount > 0` and `amount <= 50000`
+- `payment_date` must be a real `YYYY-MM-DD` date and not in the future
+- `payment_method` must be one of `Bank transfer`, `Standing order`, `Direct debit`, `Cash`, `Other`
+- `reference` and `notes` are optional strings
+
+Success `201`:
+
+```json
+{
+  "data": {
+    "report": {
+      "id": "uuid",
+      "amount": 1450,
+      "payment_date": "2026-04-27",
+      "payment_method": "Bank transfer",
+      "reference": "TXN-123",
+      "notes": "April rent",
+      "source": "manual",
+      "status": "pending",
+      "created_at": "2026-04-28T05:43:00.000Z"
+    }
+  }
+}
+```
+
+Possible errors:
+
+- `400 invalid_amount`
+- `400 invalid_payment_date`
+- `400 invalid_payment_method`
+- `401 auth_required`
+- `401 invalid_token`
+- `404 tenancy_not_found`
 
 ## Error Format
 

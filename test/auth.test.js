@@ -10,6 +10,9 @@ function createMemoryAccountStore() {
   const profilesByUserId = new Map();
   const settingsByUserId = new Map();
   const notificationsByUserId = new Map();
+  const tenanciesByUserId = new Map();
+  const rentPaymentsByUserId = new Map();
+  const rentReportsByUserId = new Map();
 
   return {
     async createRegisteredUser({ email, passwordHash, name, termsVersion, privacyVersion }) {
@@ -44,6 +47,8 @@ function createMemoryAccountStore() {
         language: 'en-GB',
       });
       notificationsByUserId.set(user.id, []);
+      rentPaymentsByUserId.set(user.id, []);
+      rentReportsByUserId.set(user.id, []);
       assert.equal(termsVersion, '2026-04-28');
       assert.equal(privacyVersion, '2026-04-28');
       return this.getMe(user.id);
@@ -158,6 +163,48 @@ function createMemoryAccountStore() {
         read_at: null,
         ...notification,
       });
+    },
+
+    async upsertTenancy(userId, tenancy) {
+      const row = {
+        id: tenanciesByUserId.get(userId)?.id || `tenancy-${userId}`,
+        user_id: userId,
+        ...tenancy,
+      };
+      tenanciesByUserId.set(userId, row);
+
+      const payments = Array.from({ length: 12 }, (_, index) => ({
+        id: `payment-${index + 1}`,
+        amount: tenancy.monthly_rent,
+        due_date: `2026-${String(index + 5).padStart(2, '0')}-05`,
+        paid_date: null,
+        status: 'due',
+      }));
+      rentPaymentsByUserId.set(userId, payments);
+
+      return row;
+    },
+
+    async getTenancy(userId) {
+      return tenanciesByUserId.get(userId) || null;
+    },
+
+    async listRentPayments(userId) {
+      return rentPaymentsByUserId.get(userId) || [];
+    },
+
+    async createManualRentReport(userId, report) {
+      const tenancy = tenanciesByUserId.get(userId);
+      if (!tenancy) return null;
+
+      const rentReport = {
+        id: `report-${rentReportsByUserId.get(userId).length + 1}`,
+        status: 'pending',
+        created_at: '2026-04-28T05:43:00.000Z',
+        ...report,
+      };
+      rentReportsByUserId.get(userId).push(rentReport);
+      return rentReport;
     },
   };
 }
@@ -370,5 +417,141 @@ test('list and mark notifications as read', async () => {
 
     assert.equal(readAllResponse.status, 200);
     assert.equal(readAll.data.updated_count, 1);
+  });
+});
+
+test('upsert tenancy generates rent payments and manual reports persist as pending', async () => {
+  const store = createMemoryAccountStore();
+  const app = createApp({
+    accountStore: store,
+    jwtSecret: 'test-secret',
+    now: () => new Date('2026-04-28T05:43:00.000Z'),
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const registerResponse = await fetch(`${baseUrl}/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Alex Morgan',
+        email: 'alex@example.com',
+        password: 'Password1',
+        accept_terms: true,
+        terms_version: '2026-04-28',
+        privacy_version: '2026-04-28',
+      }),
+    });
+    const registered = await registerResponse.json();
+    const token = registered.data.access_token;
+
+    const tenancyResponse = await fetch(`${baseUrl}/v1/me/tenancy`, {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        property_address: 'Flat 4, 10 Grove Street, London',
+        monthly_rent: 1450,
+        payment_day: 5,
+        landlord_name: 'Sam Landlord',
+        agent_name: '',
+        tenancy_end_date: '2027-04-30',
+        landlord_email: 'landlord@example.com',
+        landlord_phone: '+44 7700 900123',
+      }),
+    });
+    const tenancy = await tenancyResponse.json();
+
+    assert.equal(tenancyResponse.status, 200);
+    assert.equal(tenancy.data.tenancy.property_address, 'Flat 4, 10 Grove Street, London');
+    assert.equal(tenancy.data.tenancy.monthly_rent, 1450);
+    assert.equal(tenancy.data.tenancy.payment_day, 5);
+
+    const getTenancyResponse = await fetch(`${baseUrl}/v1/me/tenancy`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const fetchedTenancy = await getTenancyResponse.json();
+
+    assert.equal(getTenancyResponse.status, 200);
+    assert.equal(fetchedTenancy.data.tenancy.landlord_name, 'Sam Landlord');
+
+    const paymentsResponse = await fetch(`${baseUrl}/v1/me/rent/payments`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const payments = await paymentsResponse.json();
+
+    assert.equal(paymentsResponse.status, 200);
+    assert.equal(payments.data.payments.length, 12);
+    assert.deepEqual(payments.data.payments[0], {
+      id: 'payment-1',
+      amount: 1450,
+      due_date: '2026-05-05',
+      paid_date: null,
+      status: 'due',
+    });
+
+    const reportResponse = await fetch(`${baseUrl}/v1/me/rent/reports/manual`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: 1450,
+        payment_date: '2026-04-27',
+        payment_method: 'Bank transfer',
+        reference: 'TXN-123',
+        notes: 'April rent',
+      }),
+    });
+    const report = await reportResponse.json();
+
+    assert.equal(reportResponse.status, 201);
+    assert.equal(report.data.report.id, 'report-1');
+    assert.equal(report.data.report.status, 'pending');
+    assert.equal(report.data.report.created_at, '2026-04-28T05:43:00.000Z');
+  });
+});
+
+test('manual rent report rejects future payment dates', async () => {
+  const app = createApp({
+    accountStore: createMemoryAccountStore(),
+    jwtSecret: 'test-secret',
+    now: () => new Date('2026-04-28T05:43:00.000Z'),
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const registerResponse = await fetch(`${baseUrl}/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Alex Morgan',
+        email: 'alex@example.com',
+        password: 'Password1',
+        accept_terms: true,
+        terms_version: '2026-04-28',
+        privacy_version: '2026-04-28',
+      }),
+    });
+    const registered = await registerResponse.json();
+    const token = registered.data.access_token;
+
+    const reportResponse = await fetch(`${baseUrl}/v1/me/rent/reports/manual`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: 1450,
+        payment_date: '2026-04-29',
+        payment_method: 'Bank transfer',
+      }),
+    });
+    const report = await reportResponse.json();
+
+    assert.equal(reportResponse.status, 400);
+    assert.equal(report.error.code, 'invalid_payment_date');
   });
 });
