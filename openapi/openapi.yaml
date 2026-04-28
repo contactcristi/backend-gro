@@ -1,0 +1,593 @@
+openapi: 3.1.0
+info:
+  title: GRO Backend API
+  version: 1.0.0
+  description: API contract for GRO mobile app integration covering Phases 0, 1, and 2.
+servers:
+  - url: https://api.example.com
+    description: Production placeholder
+  - url: http://localhost:3000
+    description: Local Docker/API server
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+  /v1/auth/register:
+    post:
+      summary: Register user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Registered and authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /v1/auth/login:
+    post:
+      summary: Login user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+  /v1/me:
+    get:
+      summary: Get current user
+      responses:
+        '200':
+          description: Current user profile and settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+  /v1/me/profile:
+    patch:
+      summary: Update profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+      responses:
+        '200':
+          description: Updated current user profile and settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /v1/me/settings:
+    patch:
+      summary: Update app settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdateRequest'
+      responses:
+        '200':
+          description: Updated current user profile and settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+  /v1/me/notifications:
+    get:
+      summary: List notifications
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Notification list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationsResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+  /v1/me/notifications/{id}/read:
+    post:
+      summary: Mark notification read
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Updated notification
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [notification]
+                    properties:
+                      notification:
+                        $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/me/notifications/read-all:
+    post:
+      summary: Mark all notifications read
+      responses:
+        '200':
+          description: Count of updated notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [updated_count]
+                    properties:
+                      updated_count:
+                        type: integer
+                        minimum: 0
+        '401':
+          $ref: '#/components/responses/Error'
+  /v1/me/tenancy:
+    get:
+      summary: Get tenancy
+      responses:
+        '200':
+          description: Current tenancy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenancyResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Create or replace tenancy
+      description: Generates or updates rent payment schedule rows for up to the next 12 months.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenancyRequest'
+      responses:
+        '200':
+          description: Saved tenancy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenancyResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+  /v1/me/rent/payments:
+    get:
+      summary: List rent payment schedule
+      responses:
+        '200':
+          description: Rent payment list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RentPaymentsResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+  /v1/me/rent/reports/manual:
+    post:
+      summary: Create manual rent report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualRentReportRequest'
+      responses:
+        '201':
+          description: Created manual rent report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RentReportResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdPath:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Machine-readable error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [name, email, password, accept_terms]
+      properties:
+        name:
+          type: string
+          minLength: 2
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        accept_terms:
+          type: boolean
+          const: true
+        terms_version:
+          type: string
+          default: '2026-04-28'
+        privacy_version:
+          type: string
+          default: '2026-04-28'
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    AuthResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [access_token, refresh_token, expires_in, token_type, user]
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            expires_in:
+              type: integer
+              const: 900
+            token_type:
+              type: string
+              const: Bearer
+            user:
+              $ref: '#/components/schemas/MeData'
+    MeResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/MeData'
+    MeData:
+      type: object
+      required: [user, settings]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        settings:
+          $ref: '#/components/schemas/Settings'
+    User:
+      type: object
+      required: [id, name, email, nationality, kyc_status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        dob:
+          type: [string, 'null']
+          format: date
+        nationality:
+          type: string
+        kyc_status:
+          type: string
+          enum: [pending, verified, rejected]
+    Settings:
+      type: object
+      required:
+        - push_rent_reminders
+        - push_passport_updates
+        - push_rewards
+        - push_promos
+        - email_monthly_statement
+        - language
+      properties:
+        push_rent_reminders:
+          type: boolean
+        push_passport_updates:
+          type: boolean
+        push_rewards:
+          type: boolean
+        push_promos:
+          type: boolean
+        email_monthly_statement:
+          type: boolean
+        language:
+          type: string
+          enum: [en-GB, en-US]
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+        email:
+          type: string
+          format: email
+        dob:
+          type: string
+          format: date
+        nationality:
+          type: string
+    SettingsUpdateRequest:
+      type: object
+      properties:
+        push_rent_reminders:
+          type: boolean
+        push_passport_updates:
+          type: boolean
+        push_rewards:
+          type: boolean
+        push_promos:
+          type: boolean
+        email_monthly_statement:
+          type: boolean
+        language:
+          type: string
+          enum: [en-GB, en-US]
+    Notification:
+      type: object
+      required: [id, title, body, type, icon, timestamp, read]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        type:
+          type: string
+          enum: [rent, passport, rewards, promo, system]
+        icon:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        read:
+          type: boolean
+    NotificationsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [notifications]
+          properties:
+            notifications:
+              type: array
+              items:
+                $ref: '#/components/schemas/Notification'
+    TenancyRequest:
+      type: object
+      required: [property_address, monthly_rent, payment_day, landlord_name, agent_name, tenancy_end_date]
+      properties:
+        property_address:
+          type: string
+        monthly_rent:
+          type: number
+          exclusiveMinimum: 0
+        payment_day:
+          type: integer
+          minimum: 1
+          maximum: 31
+        landlord_name:
+          type: string
+        agent_name:
+          type: string
+        tenancy_end_date:
+          type: string
+          format: date
+        landlord_email:
+          type: [string, 'null']
+          format: email
+        landlord_phone:
+          type: [string, 'null']
+    Tenancy:
+      allOf:
+        - type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              format: uuid
+        - $ref: '#/components/schemas/TenancyRequest'
+    TenancyResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [tenancy]
+          properties:
+            tenancy:
+              $ref: '#/components/schemas/Tenancy'
+    RentPayment:
+      type: object
+      required: [id, amount, due_date, paid_date, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        due_date:
+          type: string
+          format: date
+        paid_date:
+          type: [string, 'null']
+          format: date
+        status:
+          type: string
+          enum: [paid, due, overdue]
+    RentPaymentsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [payments]
+          properties:
+            payments:
+              type: array
+              items:
+                $ref: '#/components/schemas/RentPayment'
+    ManualRentReportRequest:
+      type: object
+      required: [amount, payment_date, payment_method]
+      properties:
+        amount:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 50000
+        payment_date:
+          type: string
+          format: date
+        payment_method:
+          type: string
+          enum: [Bank transfer, Standing order, Direct debit, Cash, Other]
+        reference:
+          type: [string, 'null']
+        notes:
+          type: [string, 'null']
+    RentReport:
+      type: object
+      required: [id, amount, payment_date, payment_method, source, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        payment_date:
+          type: string
+          format: date
+        payment_method:
+          type: string
+          enum: [Bank transfer, Standing order, Direct debit, Cash, Other]
+        reference:
+          type: [string, 'null']
+        notes:
+          type: [string, 'null']
+        source:
+          type: string
+          const: manual
+        status:
+          type: string
+          enum: [pending, verified, rejected]
+        created_at:
+          type: string
+          format: date-time
+    RentReportResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [report]
+          properties:
+            report:
+              $ref: '#/components/schemas/RentReport'
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
