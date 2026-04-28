@@ -21,6 +21,32 @@ function mapMeRow(row) {
   };
 }
 
+function mapNotificationRow(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    type: row.type,
+    icon: row.icon,
+    timestamp: row.created_at,
+    read: row.read_at !== null,
+  };
+}
+
+function buildUpdateSet(updates, mapping, startIndex = 1) {
+  const assignments = [];
+  const values = [];
+
+  for (const [apiField, dbColumn] of Object.entries(mapping)) {
+    if (updates[apiField] !== undefined) {
+      values.push(updates[apiField]);
+      assignments.push(`${dbColumn} = $${startIndex + values.length - 1}`);
+    }
+  }
+
+  return { assignments, values };
+}
+
 function createPostgresAccountStore(pool) {
   return {
     async createRegisteredUser({ email, passwordHash, name, termsVersion, privacyVersion }) {
@@ -121,6 +147,122 @@ function createPostgresAccountStore(pool) {
         [userId],
       );
       return mapMeRow(result.rows[0]);
+    },
+
+    async updateProfile(userId, updates) {
+      const client = await pool.connect();
+
+      try {
+        await client.query('BEGIN');
+
+        if (updates.email !== undefined) {
+          await client.query(
+            `UPDATE users
+             SET email = $1
+             WHERE id = $2`,
+            [updates.email, userId],
+          );
+        }
+
+        const { assignments, values } = buildUpdateSet(updates, {
+          name: 'full_name',
+          dob: 'dob',
+          nationality: 'nationality',
+        });
+
+        if (assignments.length > 0) {
+          values.push(userId);
+          await client.query(
+            `UPDATE user_profiles
+             SET ${assignments.join(', ')}
+             WHERE user_id = $${values.length}`,
+            values,
+          );
+        }
+
+        await client.query(
+          `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+           VALUES ($1, 'profile.update', 'user_profile', $1, $2::jsonb)`,
+          [userId, JSON.stringify({ fields: Object.keys(updates) })],
+        );
+
+        await client.query('COMMIT');
+        return this.getMe(userId);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async updateSettings(userId, updates) {
+      const { assignments, values } = buildUpdateSet(updates, {
+        push_rent_reminders: 'push_rent_reminders',
+        push_passport_updates: 'push_passport_updates',
+        push_rewards: 'push_rewards',
+        push_promos: 'push_promos',
+        email_monthly_statement: 'email_monthly_statement',
+        language: 'language',
+      });
+
+      values.push(userId);
+      const result = await pool.query(
+        `UPDATE user_settings
+         SET ${assignments.join(', ')}
+         WHERE user_id = $${values.length}`,
+        values,
+      );
+
+      if (result.rowCount === 0) return null;
+
+      await pool.query(
+        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+         VALUES ($1, 'settings.update', 'user_settings', $1, $2::jsonb)`,
+        [userId, JSON.stringify({ fields: Object.keys(updates) })],
+      );
+
+      return this.getMe(userId);
+    },
+
+    async listNotifications(userId, { limit }) {
+      const result = await pool.query(
+        `SELECT
+           id::text,
+           title,
+           body,
+           type,
+           icon,
+           created_at,
+           read_at
+         FROM notifications
+         WHERE user_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [userId, limit],
+      );
+      return result.rows.map(mapNotificationRow);
+    },
+
+    async markNotificationRead(userId, notificationId) {
+      const result = await pool.query(
+        `UPDATE notifications
+         SET read_at = COALESCE(read_at, now())
+         WHERE user_id = $1 AND id = $2
+         RETURNING id::text, title, body, type, icon, created_at, read_at`,
+        [userId, notificationId],
+      );
+      return result.rows[0] ? mapNotificationRow(result.rows[0]) : null;
+    },
+
+    async markAllNotificationsRead(userId) {
+      const result = await pool.query(
+        `UPDATE notifications
+         SET read_at = COALESCE(read_at, now())
+         WHERE user_id = $1`,
+        [userId],
+      );
+      return result.rowCount;
     },
   };
 }

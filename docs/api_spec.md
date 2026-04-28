@@ -169,6 +169,160 @@ Possible errors:
 - `401 invalid_token`
 - `404 user_not_found`
 
+### PATCH `/v1/me/profile`
+
+Updates profile fields supplied by the mobile profile-edit screen.
+
+Headers:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Request accepts any subset:
+
+```json
+{
+  "name": "Alexandra Morgan",
+  "email": "alexandra@example.com",
+  "dob": "1991-02-03",
+  "nationality": "British"
+}
+```
+
+Validation:
+
+- `name`, when provided, must trim to at least 2 characters
+- `email`, when provided, must be valid, at least 5 characters, and unique
+- `dob`, when provided, must be a real `YYYY-MM-DD` date
+- `nationality`, when provided, is trimmed and stored as text
+
+Success `200`: same response shape as `GET /v1/me`.
+
+Possible errors:
+
+- `400 invalid_name`
+- `400 invalid_email`
+- `400 invalid_dob`
+- `400 empty_update`
+- `401 auth_required`
+- `401 invalid_token`
+- `409 email_taken`
+
+### PATCH `/v1/me/settings`
+
+Updates the authenticated user's app settings.
+
+Headers:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Request accepts any subset:
+
+```json
+{
+  "push_rent_reminders": false,
+  "push_passport_updates": true,
+  "push_rewards": false,
+  "push_promos": false,
+  "email_monthly_statement": true,
+  "language": "en-US"
+}
+```
+
+Validation:
+
+- Push/email fields must be booleans
+- `language` must be `en-GB` or `en-US`
+
+Success `200`: same response shape as `GET /v1/me`.
+
+Possible errors:
+
+- `400 invalid_setting`
+- `400 invalid_language`
+- `400 empty_update`
+- `401 auth_required`
+- `401 invalid_token`
+
+### GET `/v1/me/notifications`
+
+Lists the authenticated user's notification inbox newest-first.
+
+Headers:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Query:
+
+- `limit`: optional integer, default `50`, clamped to `1..100`
+
+Success `200`:
+
+```json
+{
+  "data": {
+    "notifications": [
+      {
+        "id": "uuid",
+        "title": "Rent reminder",
+        "body": "Your rent payment is due soon.",
+        "type": "rent",
+        "icon": "home",
+        "timestamp": "2026-04-28T05:30:00.000Z",
+        "read": false
+      }
+    ]
+  }
+}
+```
+
+### POST `/v1/me/notifications/:id/read`
+
+Marks one notification as read for the authenticated user.
+
+Success `200`:
+
+```json
+{
+  "data": {
+    "notification": {
+      "id": "uuid",
+      "title": "Rent reminder",
+      "body": "Your rent payment is due soon.",
+      "type": "rent",
+      "icon": "home",
+      "timestamp": "2026-04-28T05:30:00.000Z",
+      "read": true
+    }
+  }
+}
+```
+
+Possible errors:
+
+- `401 auth_required`
+- `401 invalid_token`
+- `404 notification_not_found`
+
+### POST `/v1/me/notifications/read-all`
+
+Marks all notifications as read for the authenticated user.
+
+Success `200`:
+
+```json
+{
+  "data": {
+    "updated_count": 3
+  }
+}
+```
+
 ## Error Format
 
 ```json

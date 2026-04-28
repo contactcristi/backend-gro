@@ -101,6 +101,82 @@ function validateRegisterBody(body) {
   return null;
 }
 
+function isRealDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function validateProfileUpdates(body) {
+  const updates = {};
+
+  if (body.name !== undefined) {
+    const name = String(body.name || '').trim();
+    if (name.length < 2) {
+      return { error: { code: 'invalid_name', message: 'Name must be at least 2 characters.', field: 'name' } };
+    }
+    updates.name = name;
+  }
+
+  if (body.email !== undefined) {
+    const email = normalizeEmail(body.email);
+    if (!isValidEmail(email) || email.length < 5) {
+      return { error: { code: 'invalid_email', message: 'Email must be valid.', field: 'email' } };
+    }
+    updates.email = email;
+  }
+
+  if (body.dob !== undefined) {
+    if (!isRealDate(body.dob)) {
+      return { error: { code: 'invalid_dob', message: 'DOB must be a real YYYY-MM-DD date.', field: 'dob' } };
+    }
+    updates.dob = body.dob;
+  }
+
+  if (body.nationality !== undefined) {
+    updates.nationality = String(body.nationality || '').trim();
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { error: { code: 'empty_update', message: 'At least one profile field is required.' } };
+  }
+
+  return { updates };
+}
+
+function validateSettingsUpdates(body) {
+  const updates = {};
+  const booleanFields = [
+    'push_rent_reminders',
+    'push_passport_updates',
+    'push_rewards',
+    'push_promos',
+    'email_monthly_statement',
+  ];
+
+  for (const field of booleanFields) {
+    if (body[field] !== undefined) {
+      if (typeof body[field] !== 'boolean') {
+        return { error: { code: 'invalid_setting', message: `${field} must be boolean.`, field } };
+      }
+      updates[field] = body[field];
+    }
+  }
+
+  if (body.language !== undefined) {
+    if (!['en-GB', 'en-US'].includes(body.language)) {
+      return { error: { code: 'invalid_language', message: 'Language must be en-GB or en-US.', field: 'language' } };
+    }
+    updates.language = body.language;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { error: { code: 'empty_update', message: 'At least one settings field is required.' } };
+  }
+
+  return { updates };
+}
+
 function authenticate(jwtSecret) {
   return (req, res, next) => {
     const header = req.get('authorization') || '';
@@ -202,6 +278,58 @@ function createApp({ accountStore, jwtSecret, pool }) {
       return sendError(res, 404, 'user_not_found', 'Authenticated user was not found.');
     }
     return res.json({ data: me });
+  }));
+
+  app.patch('/v1/me/profile', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const { updates, error } = validateProfileUpdates(req.body || {});
+    if (error) {
+      return sendError(res, 400, error.code, error.message, error.field ? { field: error.field } : {});
+    }
+
+    try {
+      const me = await accountStore.updateProfile(req.auth.userId, updates);
+      if (!me) {
+        return sendError(res, 404, 'user_not_found', 'Authenticated user was not found.');
+      }
+      return res.json({ data: me });
+    } catch (err) {
+      if (err.code === '23505') {
+        return sendError(res, 409, 'email_taken', 'Email is already registered.', { field: 'email' });
+      }
+      throw err;
+    }
+  }));
+
+  app.patch('/v1/me/settings', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const { updates, error } = validateSettingsUpdates(req.body || {});
+    if (error) {
+      return sendError(res, 400, error.code, error.message, error.field ? { field: error.field } : {});
+    }
+
+    const me = await accountStore.updateSettings(req.auth.userId, updates);
+    if (!me) {
+      return sendError(res, 404, 'user_not_found', 'Authenticated user was not found.');
+    }
+    return res.json({ data: me });
+  }));
+
+  app.get('/v1/me/notifications', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit || '50', 10) || 50, 1), 100);
+    const notifications = await accountStore.listNotifications(req.auth.userId, { limit });
+    return res.json({ data: { notifications } });
+  }));
+
+  app.post('/v1/me/notifications/read-all', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const updatedCount = await accountStore.markAllNotificationsRead(req.auth.userId);
+    return res.json({ data: { updated_count: updatedCount } });
+  }));
+
+  app.post('/v1/me/notifications/:id/read', authenticate(jwtSecret), asyncRoute(async (req, res) => {
+    const notification = await accountStore.markNotificationRead(req.auth.userId, req.params.id);
+    if (!notification) {
+      return sendError(res, 404, 'notification_not_found', 'Notification was not found.');
+    }
+    return res.json({ data: { notification } });
   }));
 
   app.use((err, req, res, next) => {
