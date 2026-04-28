@@ -1,0 +1,37 @@
+services:
+  nginx-proxy:
+    image: 'jc21/nginx-proxy-manager:latest'
+    restart: always
+    ports:
+      - '80:80'
+      - '443:443'
+      - '81:81'
+    volumes:
+      - ./nginx/data:/data
+      - ./nginx/letsencrypt:/etc/letsencrypt
+
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: user_admin
+      POSTGRES_PASSWORD: smevepamajusaurneplu
+      POSTGRES_DB: groadmin_db
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user_admin -d groadmin_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    restart: always
+    environment:
+      DATABASE_URL: postgres://user_admin:smevepamajusaurneplu@db:5432/groadmin_db
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
